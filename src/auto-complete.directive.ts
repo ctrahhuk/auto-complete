@@ -18,7 +18,6 @@ import { NguiAutoCompleteComponent } from './auto-complete.component';
 import {
     AbstractControl,
     ControlContainer,
-    FormControl,
     FormGroup,
     FormGroupName
 } from '@angular/forms';
@@ -30,7 +29,7 @@ import {
     selector: '[auto-complete], [ngui-auto-complete]'
 })
 export class NguiAutoCompleteDirective implements OnInit, OnChanges, AfterViewInit, OnDestroy {
-
+    @Input('outer-input-element') public outerInputElement: HTMLInputElement;
     @Input('autocomplete') public autocomplete = false;
     @Input('auto-complete-placeholder') public autoCompletePlaceholder: string;
     @Input('source') public source: any;
@@ -57,10 +56,12 @@ export class NguiAutoCompleteDirective implements OnInit, OnChanges, AfterViewIn
     @Input('ignore-accents') public ignoreAccents: boolean = true;
 
     @Input() public ngModel: string;
+    @Input('form') public form: FormGroup;
     @Input('formControlName') public formControlName: string;
     // if [formControl] is used on the anchor where our directive is sitting
     // a form is not necessary to use a formControl we should also support this
-    @Input('formControl') public extFormControl: FormControl;
+    @Input('formControl') public formControl: AbstractControl;
+    @Input('extFormControl') public extFormControl: AbstractControl;
     @Input('z-index') public zIndex: string = '1';
     @Input('is-rtl') public isRtl: boolean = false;
 
@@ -73,7 +74,6 @@ export class NguiAutoCompleteDirective implements OnInit, OnChanges, AfterViewIn
     private el: HTMLElement;   // this element element, can be any
     private acDropdownEl: HTMLElement; // auto complete element
     private inputEl: HTMLInputElement;  // input element of this element
-    private formControl: AbstractControl;
     private revertValue: any;
     private dropdownJustHidden: boolean;
     private scheduledBlurHandler: any;
@@ -97,12 +97,15 @@ export class NguiAutoCompleteDirective implements OnInit, OnChanges, AfterViewIn
         };
 
         document.addEventListener('click', this.documentClickListener);
-        // wrap this element with <div class="ngui-auto-complete">
-        this.wrapperEl = document.createElement('div');
-        this.wrapperEl.className = 'ngui-auto-complete-wrapper';
-        this.wrapperEl.style.position = 'relative';
-        this.el.parentElement.insertBefore(this.wrapperEl, this.el.nextSibling);
-        this.wrapperEl.appendChild(this.el);
+
+        if (!this.outerInputElement) {
+            // wrap this element with <div class="ngui-auto-complete">
+            this.wrapperEl = document.createElement('div');
+            this.wrapperEl.className = 'ngui-auto-complete-wrapper';
+            this.wrapperEl.style.position = 'relative';
+            this.el.parentElement.insertBefore(this.wrapperEl, this.el.nextSibling);
+            this.wrapperEl.appendChild(this.el);
+        }
 
         // Check if we were supplied with a [formControlName] and it is inside a [form]
         // else check if we are supplied with a [FormControl] regardless if it is inside a [form] tag
@@ -128,26 +131,27 @@ export class NguiAutoCompleteDirective implements OnInit, OnChanges, AfterViewIn
     ngAfterViewInit() {
         // if this element is not an input tag, move dropdown after input tag
         // so that it displays correctly
-        this.inputEl = this.el.tagName === 'INPUT' ? this.el as HTMLInputElement : this.el.querySelector('input');
+
+        if (this.outerInputElement) {
+            this.inputEl = this.outerInputElement;
+        } else {
+            this.inputEl = this.el.tagName === 'INPUT' ? this.el as HTMLInputElement : this.el.querySelector('input');
+        }
 
         if (this.openOnFocus) {
-            this.inputEl.addEventListener('focus', (e) => this.showAutoCompleteDropdown(e));
+            this.inputEl.addEventListener('focus', this.showAutoCompleteDropdown);
         }
 
         if (this.closeOnFocusOut) {
-            this.inputEl.addEventListener('focusout', (e) => this.hideAutoCompleteDropdown(e));
+            this.inputEl.addEventListener('focusout', this.hideAutoCompleteDropdown);
         }
 
         if (!this.autocomplete) {
             this.inputEl.setAttribute('autocomplete', 'off');
         }
-        this.inputEl.addEventListener('blur', (e) => {
-            this.scheduledBlurHandler = () => {
-                return this.blurHandler(e);
-            };
-        });
-        this.inputEl.addEventListener('keydown', (e) => this.keydownEventHandler(e));
-        this.inputEl.addEventListener('input', (e) => this.inputEventHandler(e));
+        this.inputEl.addEventListener('blur', this.blurEventHandler);
+        this.inputEl.addEventListener('keydown', this.keydownEventHandler);
+        this.inputEl.addEventListener('input', this.inputEventHandler);
     }
 
     ngOnDestroy(): void {
@@ -158,6 +162,14 @@ export class NguiAutoCompleteDirective implements OnInit, OnChanges, AfterViewIn
         if (this.documentClickListener) {
             document.removeEventListener('click', this.documentClickListener);
         }
+
+        if (this.outerInputElement) {
+            this.inputEl.removeEventListener('focus', this.showAutoCompleteDropdown);
+            this.inputEl.removeEventListener('focusout', this.hideAutoCompleteDropdown);
+            this.inputEl.removeEventListener('blur', this.blurEventHandler);
+            this.inputEl.removeEventListener('keydown', this.keydownEventHandler);
+            this.inputEl.removeEventListener('input', this.inputEventHandler);
+        }
     }
 
     ngOnChanges(changes: SimpleChanges): void {
@@ -165,6 +177,12 @@ export class NguiAutoCompleteDirective implements OnInit, OnChanges, AfterViewIn
             this.ngModel = this.setToStringFunction(changes['ngModel'].currentValue);
             this.renderValue(this.ngModel);
         }
+    }
+
+    blurEventHandler = (e) => {
+        this.scheduledBlurHandler = () => {
+            return this.blurHandler(e);
+        };
     }
 
     // show auto-complete list below the current element
@@ -209,9 +227,9 @@ export class NguiAutoCompleteDirective implements OnInit, OnChanges, AfterViewIn
         this.acDropdownEl = this.componentRef.location.nativeElement;
         this.acDropdownEl.style.display = 'none';
 
-        // if this element is not an input tag, move dropdown after input tag
+        // if this element is not an input tag and outer input was not set, move dropdown after inner input tag
         // so that it displays correctly
-        if (this.el.tagName !== 'INPUT' && this.acDropdownEl) {
+        if (this.el.tagName !== 'INPUT' && !this.outerInputElement) {
             this.inputEl.parentElement.insertBefore(this.acDropdownEl, this.inputEl.nextSibling);
         }
         this.revertValue = typeof this.ngModel !== 'undefined' ? this.ngModel : this.inputEl.value;
@@ -259,10 +277,7 @@ export class NguiAutoCompleteDirective implements OnInit, OnChanges, AfterViewIn
 
     public styleAutoCompleteDropdown = () => {
         if (this.componentRef) {
-            const component = this.componentRef.instance;
-
             /* setting width/height auto complete */
-            const thisElBCR = this.el.getBoundingClientRect();
             const thisInputElBCR = this.inputEl.getBoundingClientRect();
             const closeToBottom = thisInputElBCR.bottom + 100 > window.innerHeight;
             const directionOfStyle = this.isRtl ? 'right' : 'left';
@@ -273,10 +288,12 @@ export class NguiAutoCompleteDirective implements OnInit, OnChanges, AfterViewIn
             this.acDropdownEl.style[directionOfStyle] = '0';
             this.acDropdownEl.style.display = 'inline-block';
 
-            if (closeToBottom) {
-                this.acDropdownEl.style.bottom = `${thisInputElBCR.height}px`;
-            } else {
-                this.acDropdownEl.style.top = `${thisInputElBCR.height}px`;
+            if (!this.outerInputElement) {
+                if (closeToBottom) {
+                    this.acDropdownEl.style.bottom = `${thisInputElBCR.height}px`;
+                } else {
+                    this.acDropdownEl.style.top = `${thisInputElBCR.height}px`;
+                }
             }
         }
     }
